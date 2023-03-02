@@ -1,0 +1,11 @@
+name: FORS2_impol
+
+dependencies:
+  - python=3.8.8
+
+  - scipy
+  - matplotlib
+  - pip
+  - pip:
+    - photutils==1.6.0 
+    - astroscrappy==1.1.*
