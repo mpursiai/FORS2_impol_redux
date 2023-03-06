@@ -12,7 +12,6 @@ import warnings
 import copy
 from astropy.stats import sigma_clipped_stats, SigmaClip
 
-
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.filterwarnings("ignore", category=Warning) 
 
@@ -167,7 +166,7 @@ def sort_raw_files(files, target_name):
 				angles = [get_angle(fits.getheader(file)) for file in sci_files]
 				sci_dic[night][chip]["filters"] = np.asarray(filters) 
 				sci_dic[night][chip]["angles"]  = np.asarray(angles)
-	
+				
 	# Go throught the science frames
 	sci_nights  = np.asarray([night for night in list(sci_dic.keys()) if len(sci_dic[night]["CHIP1"]["sci"])  != 0])
 	bias_nights = np.asarray([night for night in list(sci_dic.keys()) if len(sci_dic[night]["CHIP1"]["bias"]) != 0])
@@ -192,7 +191,7 @@ def sort_raw_files(files, target_name):
 	
 	return sci_dic
 
-def check_sci_dic(sci_dic, raw_dir, night):
+def check_sci_dic(sci_dic, raw_dir, night, check_files):
 	# Check if bad files etc are found
 
 	# Find the nights of science observations
@@ -238,11 +237,23 @@ def check_sci_dic(sci_dic, raw_dir, night):
 				exptimes = np.around(exptimes, decimals=0)
 				exptimes_uni = np.unique(exptimes)
 				inds = np.asarray(inds)
-				if len(exptimes_uni) > 1:
-					print()
-					print_title("WARNING", top=True)
-					print("Not all observations have the same ExpTime! Choose ones to delete:")
-					print("Expected input: Integers (i.e 1 2 3) or \"all\" to remove all.")
+
+				if len(exptimes_uni) > 1 or len(exptimes) not in np.arange(4,201,4) or check_files == "all":
+				
+					# The prints
+					if len(exptimes_uni) > 1:
+						print()
+						print_title("WARNING", top=True)
+						print("Not all observations have the same ExpTime! Choose the bad ones to delete!")
+					elif len(exptimes) not in np.arange(4,201,4):
+						print()
+						print_title("WARNING", top=True)
+						print("Number of files note mulitplet of four! Choose the bad ones to delete!")					
+					elif check_files == "all":
+						print()
+						print("Verify that the files are good. Choose the bad ones to delete (if needed).")	
+
+					print("Expected input: Integers (i.e 1 2 3) or \"all\" to remove all or \"none\" to remove none.")
 					js = np.arange(1,j,1)
 					while True:
 						input_str = input("Files to delete (i):")
@@ -269,11 +280,16 @@ def check_sci_dic(sci_dic, raw_dir, night):
 								print("Removing the setup")
 								js_to_delete = np.copy(js) - 1
 								break
+							elif input_str[0] == "none":
+								js_to_delete = np.asarray([])
+								print("No files removed")
+								break
 							else:
-								print("Expected input: Integers (i.e 1 2 3) or \"all\" to skip the setup.")
+								print("Expected input: Integers (i.e 1 2 3) or \"all\" to remove all or \"none\" to remove none.")
 								continue
 					# Add indexes of bad files to the list
-					bad_inds.append(inds[js_to_delete])
+					if len(js_to_delete) > 0:
+						bad_inds.append(inds[js_to_delete])
 			
 			if len(bad_inds) > 0:
 				# Then concatenate the bad inds over the setups
@@ -588,7 +604,7 @@ def mask_comb(data, ccd, beam):
 	data[bad_rows, :]=0
 	return data
 
-def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night):
+def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files):
 
 	# Find the raw files in the given directory
 	files = np.sort(glob.glob(raw_dir + "FORS2*.fits"))
@@ -597,30 +613,35 @@ def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night):
 	sci_dic = sort_raw_files(files, target_name)
 
 	# Remove Extra files 
-	if len(files) > 0:
-
-		# 2) Check sci_dic for bad files
-		sci_dic = check_sci_dic(sci_dic, raw_dir, night)
-		
-		# Find the nights of science observations
-		nights = np.asarray(list(sci_dic.keys()))
-
-
-		#3) Create some directories for the needed data products and results
-		create_directories(out_dir, nights, do_sci, do_bias, do_phot)
-	
-		#4) Calculate master bias for both chips for every night
-		find_master_bias(sci_dic, nights, out_dir, do_bias)
-	
-		#5) Subtract bias from science frames (also removes cosmics at this step)
-		subtract_bias(sci_dic, nights, out_dir, target_name, do_sci)
+	if check_files == "none":
+		print("Not checking the files! if you want to check the files, use --check_files all/none\n")
+		nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
 
 	else:
-		print_title("No raw files found!!")
-		#print("Checking if SCI files have already been reduced")
-
-		# Find nights
-		nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
+		if len(files) > 0:
+	
+			# 2) Check sci_dic for bad files
+			sci_dic = check_sci_dic(sci_dic, raw_dir, night, check_files)
+			
+			# Find the nights of science observations
+			nights = np.asarray(list(sci_dic.keys()))
+	
+	
+			#3) Create some directories for the needed data products and results
+			create_directories(out_dir, nights, do_sci, do_bias, do_phot)
+		
+			#4) Calculate master bias for both chips for every night
+			find_master_bias(sci_dic, nights, out_dir, do_bias)
+		
+			#5) Subtract bias from science frames (also removes cosmics at this step)
+			subtract_bias(sci_dic, nights, out_dir, target_name, do_sci)
+	
+		else:
+			print_title("No raw files found!!")
+			#print("Checking if SCI files have already been reduced")
+	
+			# Find nights
+			nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
 
 	#6) join the chips & mask o and e beams (or just find the comb files)
 
@@ -752,9 +773,9 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 
 	nights = np.asarray(list(comb_dic.keys()))
 
+	dist_cut = 3.5
 	# Create a log for the catalog files
 	cat_dic = {}
-
 	ccds = []
 	for night in nights:
 		cat_dic[night] = {}
@@ -783,6 +804,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 			if len(px_e) == 0:
 				px_target_e, px_target_o = find_target_xy(ccd)
 			else:
+				px_target_e = np.copy(px_e)
 				px_target_o = np.asarray([px_target_e[0], px_target_e[1] + y_shift])
 
 			# If photutils already run and not asked to run again
@@ -890,34 +912,48 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								print_title("NO TARGETS FOUND IN THE IMAGE! ",top=True)
 								print("Forcing aperture to %.1f %.1f" % (px_target[0],px_target[1]))
 								print("Use -xye to change the location")
+								print()
 								x_sources = np.asarray([px_target[0]])
 								y_sources = np.asarray([px_target[1]])
 							else:
 								# check if target is found
 								ind_target = find_ind_cat(x_sources,y_sources,px_target)
 		
-								if ((x_sources[ind_target] - px_target[0])**2 + (y_sources[ind_target] - px_target[1])**2)**0.5 > 5:
+								if ((x_sources[ind_target] - px_target[0])**2 + (y_sources[ind_target] - px_target[1])**2)**0.5 > dist_cut:
 
 									print("Target was not identified in the image!")
 									print("Forcing aperture to %.1f %.1f" % (px_target[0],px_target[1]))
 									print("Use -xye to change the location")
+									print()
 									x_sources = np.append(x_sources, px_target[0])
 									y_sources = np.append(y_sources, px_target[1])
 							
 							# Find fwhm of the sources based on 2d gaussian fits
-							fwhm_target  = find_fwhm_photutils(data_stripes, px_target)[0]								
+							ind_target = find_ind_cat(x_sources,y_sources,px_target)
+							fwhm_target  = find_fwhm_photutils(data_stripes, [x_sources[ind_target],y_sources[ind_target]])[0]	
+
 							if fwhm_target < 1:
 								print_title("FWHM OF TARGET < 1!!! SOMETHING IS SERIOUSLY WRONG! CHECK LOG FILE TO SEE IF CORRECT TARGET WAS FOUND", top=True)
 								fwhm_target = 3
 							fwhm_sources = find_fwhm_photutils(data_stripes, np.transpose([x_sources, y_sources]))
 						
+							#print_title("%7.1f %7.1f" % (fwhm_target, fwhm_target * star_fwhm_i))
 
-							good_inds = np.where((fwhm_sources < fwhm_target * star_fwhm_i) & (fwhm_sources > 2))[0]
+							good_inds = np.where((fwhm_sources < fwhm_target * star_fwhm_i) & (fwhm_sources > 1))[0]
 							xy_beams[beam] = {"x":x_sources[good_inds], "y":y_sources[good_inds], "fwhm":fwhm_sources[good_inds]}
-								
-							fwhm_beam =np.nanmean(fwhm_sources[good_inds])
+
+							# Remove target from the fwhm estimate 
+							# Huom! Only if more than one source was found
+							if len(fwhm_sources) > 1:
+								ind_target_ind = np.where(good_inds == ind_target)[0]
+								good_inds_fwhm = np.delete(good_inds, ind_target_ind)
+							else:
+								good_inds_fwhm = np.copy(good_inds)
+						
+							fwhm_beam = np.nanmean(fwhm_sources[good_inds_fwhm])
 							fwhms_beam.append(fwhm_beam)
 							target_ind = find_ind_cat(x_sources, y_sources, px_target)
+						
 							# Add the found details to the log
 							log.append(fmt_log(file.split("/")[-1], cycle, angle, beam, x_sources[target_ind], y_sources[target_ind], fwhm_sources[target_ind]))
 
@@ -981,15 +1017,14 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 									f_sources -= bkg_annu_sum
 								fe_sources  = aperstats["sum_err"].value  
 								snr_sources = f_sources / fe_sources
-
+	
 								# Cross match the positions that same sources were found
 								# Also use fwhm found by me!
 								dist_temp = ((x_sources - xy_beams[beam]["x"])**2 + (y_sources - xy_beams[beam]["y"])**2)**0.5
-								good_inds = np.where(dist_temp < 2.5)[0]
+								good_inds = np.where(dist_temp < dist_cut)[0]
 								x_sources, y_sources, fwhm_sources, snr_sources, f_sources, fe_sources = x_sources[good_inds], y_sources[good_inds], xy_beams[beam]["fwhm"][good_inds], snr_sources[good_inds], f_sources[good_inds], fe_sources[good_inds]
 
-								test_ind = np.argmin(np.abs(((x_sources - px_target[0])**2 + (y_sources - px_target[1])**2)**0.5))
-
+								#test_ind = np.argmin(np.abs(((x_sources - px_target[0])**2 + (y_sources - px_target[1])**2)**0.5))
 								cat_name = "%s%s_%.1f_%s_%s_%.2faper_%.2ffwhm.cat" % (cat_dir, filt, angle, cycle, beam, i_apers[i], fwhm)
 								np.savetxt(cat_name, np.transpose([x_sources, y_sources, fwhm_sources, snr_sources, f_sources, fe_sources]), header="x(px), y(px), fwhm, snr, f, fe", fmt="%12.3f")
 								cat_dic[night][filt][cycle][angle][beam][i_apers[i]]  = {"cat":cat_name, "fwhm":fwhm, "aper":fwhm*i_apers[i], "xy_target":px_target}
@@ -1292,10 +1327,12 @@ def create_fr_dic(cat_dic, out_dir, i_apers, star_snr, star_fwhm_i):
 					star_cyc_nums = [] 
 					for j in range(len(cycles)): 
 						star_coord_cyc = star_coord_cycs[j]
-						star_cyc_num = np.where(np.all(np.abs((star_coord_cyc - star_c1)) < star_ang_win, axis=1))[0]
-						#print(star_cyc_num)
-						if len(star_cyc_num) > 0:
-							star_cyc_nums.append(star_cyc_num[0]+1)
+						if len(star_coord_cyc) > 0:
+							star_cyc_num = np.where(np.all(np.abs((star_coord_cyc - star_c1)) < star_ang_win, axis=1))[0]
+							if len(star_cyc_num) > 0:
+								star_cyc_nums.append(star_cyc_num[0]+1)
+							else:
+								star_cyc_nums.append(np.nan)
 						else:
 							star_cyc_nums.append(np.nan)
 
@@ -1478,7 +1515,7 @@ def save_QUPX(Frs, out_dir, i_apers, ccds):
 		#Find filters
 		filters = np.asarray(list(Frs[night].keys()))
 		for filt in filters:
-			cycles = np.asarray(list(Frs[night][filt].keys()))
+			cycles = np.sort(list(Frs[night][filt].keys()))
 			if len(cycles) == 2:
 				cycles = ["c1"]
 
@@ -1710,14 +1747,14 @@ def plot_QU_plane(Qs, Qes, Us, Ues, Qs_stars, Qes_stars, Us_stars, Ues_stars, sa
 	plt.savefig(save_pdf, bbox_inches="tight")
 	print("Saved %s" % save_pdf)
 
-def FORS2_impol_redux(target_name, night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5), px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5):
+def FORS2_impol_redux(target_name, night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5), px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some"):
 
 	#Print welcome
 	string = "WELCOME TO FORS2 IMPOL REDUX! A Back-to-back reducer of FORS2 impol data"
 	print_title(string, top=True)
 
 	# FIRST HALF, GET THE SCIENCE FILES READY FOR ANALYSIS
-	comb_dic = reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night)
+	comb_dic = reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files)
 
 	# SECOND HALF: THE ANALYSIS
 
@@ -1737,20 +1774,21 @@ def main(argv):
 	# For running the script from command line
 
 	parser = argparse.ArgumentParser(prog="FORS2_impol_redux", description='Back-to-back reducer of FORS2 impol data')
-	parser.add_argument("target", type=str,  help='The name of the science target in the fits files')
-	parser.add_argument("-n",  "--night",    type=str, default="all", help='Specify wanted night (YYYY-MM-DD). Default "all".')
-	parser.add_argument("-rd", "--raw_dir",  type=str, default="archive/",    help='The directory of the raw files (default archive/)')
-	parser.add_argument("-od", "--out_dir",  type=str, default="FORS2_impol/", help='The directory of the out files (default FORS2_impol/)')
-	parser.add_argument("-ds", "--do_sci",   action='store', nargs='*', help='Forces reduction of science files in case already done')
-	parser.add_argument("-db", "--do_bias",  action='store', nargs='*', help='Forces reduction of master bias in case already done')
-	parser.add_argument("-dp", "--do_phot",  action='store', nargs='*', help='Forces the aperture photometry')
-	parser.add_argument("-dr", "--do_redux", action='store', nargs='*', help='Redo whole reduction precedure!')
-	parser.add_argument("-a",  "--apers",    nargs="+", default=[1.5852], help="The apertures (i) to use. Defined as i x FWHM")
-	parser.add_argument("-xye","--xye",      nargs="+", default=[], help="xy coordinates of e beam target. Default normally works, but the target is not always in the middle! ")
-	parser.add_argument("-fw", "--fwhm",     type=float, default=None, help="Forces fwhm (px). As default estimated based on sources available in the field")
-	parser.add_argument("-ss", "--star_snr", type=float, default=200,  help="SNR cut for the field stars. Default 200")
-	parser.add_argument("-sf", "--star_fwhm",type=float, default=1.1,  help="FWHM cut for the field stars. Given as i: FWHM_star < i x FWHM_target. Default 1.1")
-	parser.add_argument("-bkg","--bkg_type",type=str, default="2dmap", help="Either 2dmap or annulus")
+	parser.add_argument("target", type=str,    help='The name of the science target in the fits files')
+	parser.add_argument("-n",  "--night",      type=str, default="all", help='Specify wanted night (YYYY-MM-DD). Default "all".')
+	parser.add_argument("-rd", "--raw_dir",    type=str, default="archive/",    help='The directory of the raw files (default archive/)')
+	parser.add_argument("-od", "--out_dir",    type=str, default="FORS2_impol/", help='The directory of the out files (default FORS2_impol/)')
+	parser.add_argument("-ds", "--do_sci",     action='store', nargs='*', help='Forces reduction of science files in case already done')
+	parser.add_argument("-db", "--do_bias",    action='store', nargs='*', help='Forces reduction of master bias in case already done')
+	parser.add_argument("-dp", "--do_phot",    action='store', nargs='*', help='Forces the aperture photometry')
+	parser.add_argument("-dr", "--do_redux",   action='store', nargs='*', help='Redo whole reduction precedure!')
+	parser.add_argument("-a",  "--apers",      nargs="+", default=[1.5852], help="The apertures (i) to use. Defined as i x FWHM")
+	parser.add_argument("-xye","--xye",        nargs="+", default=[], help="xy coordinates of e beam target. Default normally works, but the target is not always in the middle! ")
+	parser.add_argument("-fw", "--fwhm",       type=float, default=None, help="Forces fwhm (px). As default estimated based on sources available in the field")
+	parser.add_argument("-ss", "--star_snr",   type=float, default=200,  help="SNR cut for the field stars. Default 200")
+	parser.add_argument("-sf", "--star_fwhm",  type=float, default=1.3,  help="FWHM cut for the field stars. Given as i: FWHM_star < i x FWHM_target. Default 1.3")
+	parser.add_argument("-bkg","--bkg_type",   type=str, default="2dmap", help="Either 2dmap or annulus")
+	parser.add_argument("-cf", "--check_files",type=str, default="some",  help="Investigate files manually. \"all\":Check all files, \"some\": Only if an issue, \"none\": check none.")
 	args = vars(parser.parse_args())
 
 	if args["do_sci"] == None:
@@ -1788,7 +1826,8 @@ def main(argv):
 									  set_fwhm     = args["fwhm"],\
 									  star_snr     = args["star_snr"],\
 									  star_fwhm_i  = args["star_fwhm"],\
-									  bkg_type     = args["bkg_type"])
+									  bkg_type     = args["bkg_type"],\
+									  check_files  = args["check_files"])
 
 
 # For running from shell
