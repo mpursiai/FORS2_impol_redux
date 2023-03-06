@@ -1,3 +1,2 @@
 # FORS2_impol_redux
-
-** Read the .pdf file for instructions **
+** Download the files and Read the \*README.pdf file for instructions **
