@@ -32,8 +32,8 @@ y_shift = 90
 def find_target_xy(ccd):
 	# Pre defined target locations
 	if red_ccd_name in ccd:
-		px_target_e = np.array([833,778])
-		px_target_o = np.array([833,778 + y_shift])
+		px_target_e = np.array([834,780])
+		px_target_o = np.array([834,780 + y_shift])
 	elif blue_ccd_name in ccd:
 		px_target_e = np.array([838,779])
 		px_target_o = np.array([838,779 + y_shift])
@@ -773,7 +773,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 
 	nights = np.asarray(list(comb_dic.keys()))
 
-	dist_cut = 3.5
+	dist_cut = 5
 	# Create a log for the catalog files
 	cat_dic = {}
 	ccds = []
