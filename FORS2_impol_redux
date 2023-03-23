@@ -444,6 +444,7 @@ def subtract_bias(sci_dic, nights, out_dir, target_name, do_sci):
 			filters_unique = np.unique(filters)
 			sci_files = sci_dic[night][chip]["sci"]
 			master_bias = fits.getdata(sci_dic[night][chip]["master_bias"])
+			angles = sci_dic[night][chip]["angles"]
 
 			for filt in filters_unique:
 				string = "Night: %10s; Filter: %s; CHIP: %s" % (night, filt, chip)
@@ -459,36 +460,32 @@ def subtract_bias(sci_dic, nights, out_dir, target_name, do_sci):
 					print("Already reduced! If you want to re-do use --do_sci")
 
 				else:
-					#if not len(sci_files_filt) in np.arange(0,100,4):
-					#	print("WARNING: NUMBER OF FILES NOT MULTIPLICATION OF FOUR")
-					#	print("CHECK AND DELETE THE EXTRA ONES:")
-					#	print()
-					#	for file in sci_files_filt:
-					#		sci_hdr = fits.getheader(file)
-					#		print("%s, %6s, %8.1f" % (file, get_angle(sci_hdr), float(sci_hdr["EXPTIME"])))
-					#	print()
-					#	break
-					cycle_counter = 1
-					for file in sci_files_filt:
-		
-						sci_data = fits.getdata(file)
-						sci_hdr = fits.getheader(file)
-		
-						# subtract bias
-						sci_data = sci_data - master_bias
+					# do angle per angle to make sure everything is correct
+					for angle in np.unique(angles):
+						cycle_counter = 1
+
+						# Find the correct files for that angle
+						sci_files_filt_ang = sci_files_filt[angles == angle]
+						for file in sci_files_filt_ang:
+			
+							sci_data = fits.getdata(file)
+							sci_hdr = fits.getheader(file)
+			
+							# subtract bias
+							sci_data = sci_data - master_bias
+						
+							# remove cosmics
+							sci_data = remove_cosmics(sci_data, sci_hdr)
+			
+							#cycle
+							#cycle_temp = np.ceil(cycle_counter / 4)
+			
+							# save the data in a new folder
+							sci_save_file = out_dir + "%s/" % night + "sci/" + "%s_%s_%.1f_%s_c%i.fits" % (target_name, filt, get_angle(sci_hdr), chip, cycle_counter)
+							cycle_counter = cycle_counter + 1
 					
-						# remove cosmics
-						sci_data = remove_cosmics(sci_data, sci_hdr)
-		
-						#cycle
-						cycle_temp = np.ceil(cycle_counter / 4)
-						cycle_counter = cycle_counter + 1
-		
-						# save the data in a new folder
-						sci_save_file = out_dir + "%s/" % night + "sci/" + "%s_%s_%.1f_%s_c%i.fits" % (target_name, filt, get_angle(sci_hdr), chip, cycle_temp)
-				
-						fits.writeto(sci_save_file, sci_data, header=sci_hdr, overwrite=True, output_verify="silentfix+ignore")
-						print("Saved: %s" % sci_save_file)
+							fits.writeto(sci_save_file, sci_data, header=sci_hdr, overwrite=True, output_verify="silentfix+ignore")
+							print("Saved: %s" % sci_save_file)
 				print()
 
 def join_chips(nights, out_dir, do_sci):
