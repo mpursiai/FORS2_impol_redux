@@ -209,7 +209,7 @@ def sort_raw_files(files, target_name):
 		if night not in sci_nights:
 			sci_dic.pop(night, None)	
 	
-	return sci_dic
+	return sci_dic, target_name
 
 def check_sci_dic(sci_dic, raw_dir, night, check_files):
 	# Check if bad files etc are found
@@ -344,7 +344,7 @@ def check_sci_dic(sci_dic, raw_dir, night, check_files):
 
 	return sci_dic
 
-def create_directories(out_dir, nights, do_sci, do_bias, do_phot):
+def create_directories(out_dir, nights, do_sci, do_bias, do_phot, plot_stamps):
 
 	# Creates directories if they don't yet exist
 	# do_bias = True removes previously created Master biases
@@ -424,6 +424,16 @@ def create_directories(out_dir, nights, do_sci, do_bias, do_phot):
 			if do_phot == True:
 				os.system("rm %s*" % results_dir)
 				print("Directory emptied")
+
+	for plot_save_dir in plot_save_dirs:
+		if os.path.isdir(plot_save_dir) == False and plot_stamps == True:
+			os.mkdir(plot_save_dir)
+			print("Created %s" % plot_save_dir)
+		elif os.path.isdir(plot_save_dir) == True and plot_stamps == True:
+			print("Directory exists: %s" % plot_save_dir)	
+			os.system("rm %s*" % results_dir)
+			print("Directory emptied")
+
 	print()
 
 def find_master_bias(sci_dic, nights, out_dir, do_bias):
@@ -618,13 +628,13 @@ def mask_comb(data, ccd, beam):
 	data[bad_rows, :]=0
 	return data
 
-def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files):
+def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files, plot_stamps):
 
 	# Find the raw files in the given directory
 	files = np.sort(glob.glob(raw_dir + "FORS2*.fits"))
 
 	#1) Sort the files and find SCI and BIAS frames
-	sci_dic = sort_raw_files(files, target_name)
+	sci_dic, target_name = sort_raw_files(files, target_name)
 
 	# Remove Extra files 
 	if check_files == "none":
@@ -642,7 +652,7 @@ def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, 
 	
 	
 			#3) Create some directories for the needed data products and results
-			create_directories(out_dir, nights, do_sci, do_bias, do_phot)
+			create_directories(out_dir, nights, do_sci, do_bias, do_phot, plot_stamps)
 		
 			#4) Calculate master bias for both chips for every night
 			find_master_bias(sci_dic, nights, out_dir, do_bias)
@@ -730,6 +740,33 @@ def fit_2dgaussian(data, error=None, mask=None):
 	gfit = fitter(g_init, x, y, data, weights=weights)
 	return gfit
 
+def cdf(arr, conf=[0.00001,0.99999]):
+	from scipy.interpolate import interp1d
+
+	if isinstance(conf, list) == False:
+		conf = [1 - conf, conf]		
+	confs = np.asarray(conf)
+	ar_sort = np.sort(arr.flatten())
+	#ar_sort = ar_sort[~ar_sort.mask]
+	#yvals = np.arange(len(ar_sort)+1)/float(len(ar_sort))
+	yvals = np.linspace(0,1, len(ar_sort))
+	f = interp1d(yvals, ar_sort)
+	conf_vals = f(confs)
+	return conf_vals
+
+def ds9_log_scale(arr,a=1000, lim=0):
+	# Info about ds9 log scale: http://ds9.si.edu/doc/ref/how.html
+	# Scale so x is 0 to 1
+	arr_min = np.nanmin(arr)
+	scaled_arr = arr - arr_min
+	scaled_arr_max = np.nanmax(scaled_arr)
+	scaled_arr = scaled_arr / scaled_arr_max
+	if lim == 0:
+		return np.log10(a*scaled_arr + 1) / np.log10(a)
+	elif lim != 0:
+		scaled_lim = (lim - arr_min) / scaled_arr_max
+		return np.log10(a*scaled_lim + 1) / np.log10(a)
+
 def find_fwhm_photutils(data, px_target):
 	# px_target ([x,y]) 
 	win = 10
@@ -770,7 +807,7 @@ def find_bkg_map(image, box_size=(32,64), filter_size=(3,3), sigmaclip=2.0):
 	return bkg #bkg.background_rms# * mask
 
 
-def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=5.0, set_fwhm=None, set_px=None, bkg_type="2dmap"):
+def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=5.0, set_fwhm=None, set_px=None, bkg_type="2dmap", plot_stamps=False):
 	# Run photutils
 	# https://photutils.readthedocs.io/en/stable/index.html#user-documentation
 	from photutils import DAOStarFinder
@@ -782,9 +819,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 
 	# Time to get cracking
 
-	fmt_log_hdr = '{:40s} {:7s} {:7s} {:10s} {:10s} {:10s} {:10s}'.format
-	fmt_log     = '{:40s} {:7s} {:7.1f} {:10s} {:10.2f} {:10.2f} {:10.2f}'.format
-
 	nights = np.asarray(list(comb_dic.keys()))
 
 	dist_cut = 5
@@ -795,7 +829,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 		cat_dic[night] = {}
 		cat_dir      = out_dir + night + "/" + "cats/"
 		result_dir   = out_dir + night + "/" + "results/"
-
+		stamps_dir   = out_dir + night + "/" + "stamps/"
 		filters = np.asarray(list(comb_dic[night].keys()))
 		
 		# Night specific ccd based lims
@@ -803,8 +837,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 		ccds.append(ccd)
 
 		for filt in filters:
-			log = []
-			log.append(fmt_log_hdr("File", "Cycle", "Angle", "Beam", "x", "y", "FWHM"))
+
 		
 			cat_dic[night][filt] = {}
 
@@ -844,10 +877,15 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							cat_dic[night][filt][cycle][angle]["e"][i]  = {"cat":cat_name_e, "fwhm":fwhm, "aper":fwhm*i, "xy_target":px_target_e}	
 
 			else:
+				log_dic = {} # dictionary to store the images and target info for stamps and log
 				for cycle in cycles:
 					cat_dic[night][filt][cycle] = {}
+					log_dic[cycle] = {} # dictionary to store the images and target info for stamps and log
+
 					for angle in angles:
 						cat_dic[night][filt][cycle][angle] = {}
+						log_dic[cycle][angle] = {}
+
 						print_title("Night: %10s; Filter: %s; CYCLE: %s, ANGLE: %s" % (night, filt, cycle, angle))
 
 						fwhms_beam = []
@@ -856,6 +894,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 						# Loop over o and e beams to find the average of the two to use
 						# Loop over every stripe independently
 						file = comb_dic[night][filt][cycle][angle]["file"]
+						log_dic[cycle][angle]["file"] = file
 						data = fits.getdata(file)
 						eff_gain = fits.getheader(file)[gain_key]
 
@@ -892,7 +931,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								# Proper background (error) map (Not actually needed here yet but might as well)
 								print("Estimating 2d background map for %s-beam stripe y = %i - %i" % (beam, stripe_lim[0], stripe_lim[1]))
 								bkg_stripe = find_bkg_map(data_stripe)
-
 
 								# Save the background for aperture photometry
 								stripes[beam][k]["bkg"] = bkg_stripe
@@ -968,25 +1006,31 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							fwhms_beam.append(fwhm_beam)
 							target_ind = find_ind_cat(x_sources, y_sources, px_target)
 						
-							# Add the found details to the log
-							log.append(fmt_log(file.split("/")[-1], cycle, angle, beam, x_sources[target_ind], y_sources[target_ind], fwhm_sources[target_ind]))
+
 
 						# Then setup specific fwhm
 						if set_fwhm == None:
 							fwhm = np.nanmean(fwhms_beam)
 							print("Found FWHM = %.2f" % fwhm)
+							print()
 						else: 
 							fwhm = set_fwhm
 							print("FWHM forced to %.2f" % fwhm)
+							print()
 					
 						if bkg_type == "2dmap":
 							data_stripes = data_stripes - bkg_map_stripes
 							# Sources are really slow to find if negative values present so:
 							data_stripes[data_stripes < 0] = 0
 
+						# Store data to log dic
+						log_dic[cycle][angle]["image"] = data_stripes
+						log_dic[cycle][angle]["fwhm_used"] = fwhm 
+
 						# Then the actual photometry
 						for beam in ["o", "e"]:
 							cat_dic[night][filt][cycle][angle][beam]  = {}
+							log_dic[cycle][angle][beam] = {}
 
 							if beam == "o":
 								px_target = px_target_o
@@ -1031,7 +1075,20 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 									f_sources -= bkg_annu_sum
 								fe_sources  = aperstats["sum_err"].value  
 								snr_sources = f_sources / fe_sources
-	
+								
+								#add x_source and y_source to log_dic
+								#xy_beams[beam]["xcen"] = x_sources 
+								#xy_beams[beam]["ycen"] = y_sources 
+								
+								# Find target details and add them to log_dic
+								ind_target = find_ind_cat(x_sources,y_sources,px_target)
+
+
+								log_dic[cycle][angle][beam]["x"] = x_sources[ind_target]
+								log_dic[cycle][angle][beam]["y"] = y_sources[ind_target]
+								log_dic[cycle][angle][beam]["snr"] = snr_sources[ind_target]
+								log_dic[cycle][angle][beam]["fwhm"] = xy_beams[beam]["fwhm"][ind_target]
+
 								# Cross match the positions that same sources were found
 								# Also use fwhm found by me!
 								dist_temp = ((x_sources - xy_beams[beam]["x"])**2 + (y_sources - xy_beams[beam]["y"])**2)**0.5
@@ -1044,12 +1101,95 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								cat_dic[night][filt][cycle][angle][beam][i_apers[i]]  = {"cat":cat_name, "fwhm":fwhm, "aper":fwhm*i_apers[i], "xy_target":px_target}
 
 								print("Catalog file saved at %s" % cat_name)
+							print()
+				# Save the log file
+				log = []
+				fmt_log_hdr = '{:40s} {:7s} {:7s} {:10s} {:10s} {:10s} {:10s} {:10s}'.format
+				fmt_log     = '{:40s} {:7s} {:7.1f} {:10s} {:10.2f} {:10.2f} {:10.2f} {:10.2f}'.format
+				log.append(fmt_log_hdr("File", "Cycle", "Angle", "Beam", "x", "y", "FWHM", "SNR"))
 
-						print()
+				# Add the found details to the log
+				for cycle in cycles:
+					for angle in angles:
+						for beam in ["o","e"]:
+							file = log_dic[cycle][angle]["file"]
+							x_stamp = log_dic[cycle][angle][beam]["x"] + 1
+							y_stamp = log_dic[cycle][angle][beam]["y"] + 1
+							fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
+							fwhm_used = log_dic[cycle][angle]["fwhm_used"]
+							snr_stamp = log_dic[cycle][angle][beam]["snr"]
+							log.append(fmt_log(file.split("/")[-1], cycle, angle, beam, x_stamp, y_stamp, fwhm_stamp, snr_stamp))
+
 				log_save = result_dir + "log_target_%s.txt" % (filt)
 				np.savetxt(log_save, np.transpose(log), fmt="%s")
 				print("Log file saved at %s" % log_save)
 				print()
+
+				# Plot some stamps here
+				if plot_stamps == True:
+					print_title("Plotting stamps")
+					for cycle in cycles:
+						# Create figs for the apertures
+						fig, axarr = plt.subplots(2,4, figsize=(10.5,5))
+						plt.subplots_adjust(wspace=0.02, hspace=0.02)
+						
+						for a in range(len(angles)):
+							angle = angles[a]
+
+							for i_beam in range(2):
+								beam = np.asarray(["o", "e"])[i_beam]
+								x_stamp = log_dic[cycle][angle][beam]["x"] + 1
+								y_stamp = log_dic[cycle][angle][beam]["y"] + 1
+								fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
+								fwhm_used = log_dic[cycle][angle]["fwhm_used"]
+								snr_stamp = log_dic[cycle][angle][beam]["snr"]
+
+								win = 25
+								stamp_xlow, stamp_xhig = int(np.floor(x_stamp - win)), int(np.ceil(x_stamp + win))
+								stamp_ylow, stamp_yhig = int(np.floor(y_stamp - win)), int(np.ceil(y_stamp + win))
+								im = log_dic[cycle][angle]["image"]
+								im_stamp = im[stamp_ylow:stamp_yhig, stamp_xlow:stamp_xhig]
+								
+								#Estimate vmax with CDF -> cmin based on vmax
+								cdf_lims = cdf(im)
+								vmax = cdf_lims[1]
+								vmin = cdf_lims[0]
+
+								vmin= vmax * 0.001
+								#axarr[i_beam][a].imshow(ds9_log_scale(im_stamp), cmap="viridis", origin="lower")
+								axarr[i_beam][a].imshow(ds9_log_scale(im_stamp), cmap="viridis", origin="lower", vmin=ds9_log_scale(im, lim=vmin),\
+												   vmax=ds9_log_scale(im, lim=vmax),extent=[stamp_xlow, stamp_xhig, stamp_ylow, stamp_yhig])
+
+								# Plot the apertures in the image
+								# In radius
+								apers = i_apers * fwhm_used
+								for aper in apers:
+									circle = plt.Circle((x_stamp, y_stamp), aper, fill=False, color="red", linestyle="--", linewidth=1.0)
+									axarr[i_beam][a].add_patch(circle)
+								if beam == "o":
+									axarr[i_beam][a].text(stamp_xlow + win/10, stamp_yhig - 1*win/5, "FWHM=%.1fpx" % fwhm_stamp,   fontweight="semibold",color="firebrick")
+									axarr[i_beam][a].set_title("$%.1f^{\circ}$" % angle)
+
+									if len(i_apers) == 1:
+										axarr[i_beam][a].text(stamp_xlow + win/10, stamp_yhig - 2*win/5, "Aper=%.1fpx" % apers[0], fontweight="semibold",color="firebrick")
+									else:
+										axarr[i_beam][a].text(stamp_xlow + win/10, stamp_yhig - 2*win/5, "Aper=%.1f -" % apers[0], fontweight="semibold",color="firebrick")
+										axarr[i_beam][a].text(stamp_xlow + win/10, stamp_yhig - 3*win/5, "     %.1fpx" % apers[-1], fontweight="semibold",color="firebrick")
+
+								# Tweak the target figures
+								if a != 0:
+									axarr[i_beam][a].set_yticklabels([])
+								if a == 0:		
+									axarr[i_beam][a].set_ylabel("%s-beam" % beam)
+								if i_beam ==0:
+									axarr[i_beam][a].set_xticklabels([])
+
+
+						stamp_save = stamps_dir + "stamp_target_%s_%s.pdf" % (filt, cycle)
+						plt.savefig(stamp_save, bbox_inches="tight")
+						print("Stamps saved at %s" % stamp_save)
+					print()
+
 
 	return cat_dic, np.asarray(ccds)
 
@@ -1761,21 +1901,22 @@ def plot_QU_plane(Qs, Qes, Us, Ues, Qs_stars, Qes_stars, Us_stars, Ues_stars, sa
 	plt.savefig(save_pdf, bbox_inches="tight")
 	print("Saved %s" % save_pdf)
 
-def FORS2_impol_redux(target_name="", night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5), px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some"):
+def FORS2_impol_redux(target_name="", night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5),\
+					  px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some", plot_stamps=False):
 
 	#Print welcome
 	string = "WELCOME TO FORS2 IMPOL REDUX! A Back-to-back reducer of FORS2 impol data"
 	print_title(string, top=True)
 
 	# FIRST HALF, GET THE SCIENCE FILES READY FOR ANALYSIS
-	comb_dic = reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files)
+	comb_dic = reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, check_files, plot_stamps)
 
 	# SECOND HALF: THE ANALYSIS
 
 	#1) Run Aperture photometry with photutils
 	# Addition: night specific ccds are now carried through as they are needed for the instrumental correction in save_QUPX()
 
-	cat_dic, ccds = run_photutils(comb_dic, out_dir, do_phot, i_apers, px_target_e, star_fwhm_i, set_fwhm=set_fwhm, bkg_type=bkg_type)
+	cat_dic, ccds = run_photutils(comb_dic, out_dir, do_phot, i_apers, px_target_e, star_fwhm_i, set_fwhm=set_fwhm, bkg_type=bkg_type, plot_stamps=plot_stamps)
 
 	# Find the needed flux ratios for everything
 	Frs = create_fr_dic(cat_dic, out_dir, i_apers, star_snr, star_fwhm_i)
@@ -1803,6 +1944,8 @@ def main(argv):
 	parser.add_argument("-sf", "--star_fwhm",  type=float, default=1.3,  help="FWHM cut for the field stars. Given as i: FWHM_star < i x FWHM_target. Default 1.3")
 	parser.add_argument("-bkg","--bkg_type",   type=str, default="2dmap", help="Either 2dmap or annulus")
 	parser.add_argument("-cf", "--check_files",type=str, default="some",  help="Investigate files manually. \"all\":Check all files, \"some\": Only if an issue, \"none\": check none.")
+	parser.add_argument("-ps", "--plot_stamps", action='store', nargs='*', help='Plot stamps of the apertures for each cycle')
+	
 	args = vars(parser.parse_args())
 
 	if args["do_sci"] == None:
@@ -1825,6 +1968,10 @@ def main(argv):
 		args["do_bias"] = True
 		args["do_phot"] = True
 
+	if args["plot_stamps"] == None:
+		args["plot_stamps"] = False
+	else:
+		args["plot_stamps"] = True
 
 	args["apers"] = np.asarray(args["apers"]).astype(float)
 	args["xye"]   = np.asarray(args["xye"]).astype(float)
@@ -1841,7 +1988,8 @@ def main(argv):
 									  star_snr     = args["star_snr"],\
 									  star_fwhm_i  = args["star_fwhm"],\
 									  bkg_type     = args["bkg_type"],\
-									  check_files  = args["check_files"])
+									  check_files  = args["check_files"],\
+									  plot_stamps  = args["plot_stamps"])
 
 
 # For running from shell
