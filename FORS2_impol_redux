@@ -137,10 +137,30 @@ def sort_raw_files(files, target_name):
 	# Add to the dic
 	for i in range(len(files)):
 		files_dic[files[i]]["night"] = nights[i]
-	
+
+	# Verify that given target name is found in the headers	
+	objects = np.unique([files_dic[file]["object"] for file in files])
+	sci_objects = objects[(objects != "BIAS") & (objects != 'FLAT,SKY') & (objects != 'STD')]
+
+	if target_name not in sci_objects:
+		print_title("WARNING TARGET NAME NOT FOUND!", top=True)
+		print("Choose one of the following:")
+		for sci_object in sci_objects:
+			print(sci_object)
+
+		while True:
+			input_str = input("Target Name:")
+			if input_str in sci_objects:
+				target_name = input_str
+				break
+			else:
+				print()
+				print("Provided name not in list!")
+				print()
+
+
 	# restructure the dictionary to more useful form 
-	objects = np.asarray([files_dic[file]["object"] for file in files])
-	
+
 	sci_dic = {}
 	
 	#Find all SCI and BIAS frames
@@ -1741,7 +1761,7 @@ def plot_QU_plane(Qs, Qes, Us, Ues, Qs_stars, Qes_stars, Us_stars, Ues_stars, sa
 	plt.savefig(save_pdf, bbox_inches="tight")
 	print("Saved %s" % save_pdf)
 
-def FORS2_impol_redux(target_name, night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5), px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some"):
+def FORS2_impol_redux(target_name="", night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5), px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some"):
 
 	#Print welcome
 	string = "WELCOME TO FORS2 IMPOL REDUX! A Back-to-back reducer of FORS2 impol data"
@@ -1768,7 +1788,7 @@ def main(argv):
 	# For running the script from command line
 
 	parser = argparse.ArgumentParser(prog="FORS2_impol_redux", description='Back-to-back reducer of FORS2 impol data')
-	parser.add_argument("target", type=str,    help='The name of the science target in the fits files')
+	parser.add_argument("-t",  "--target",     type=str, default="", help='The name of the science target in the fits files')
 	parser.add_argument("-n",  "--night",      type=str, default="all", help='Specify wanted night (YYYY-MM-DD). Default "all".')
 	parser.add_argument("-rd", "--raw_dir",    type=str, default="archive/",    help='The directory of the raw files (default archive/)')
 	parser.add_argument("-od", "--out_dir",    type=str, default="FORS2_impol/", help='The directory of the out files (default FORS2_impol/)')
