@@ -1113,8 +1113,8 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 					for angle in angles:
 						for beam in ["o","e"]:
 							file = log_dic[cycle][angle]["file"]
-							x_stamp = log_dic[cycle][angle][beam]["x"] + 1
-							y_stamp = log_dic[cycle][angle][beam]["y"] + 1
+							x_stamp = log_dic[cycle][angle][beam]["x"] + 1 # Value refers to wha is seen in ds9 +1 added due different indexing
+							y_stamp = log_dic[cycle][angle][beam]["y"] + 1 # Value refers to wha is seen in ds9 +1 added due different indexing
 							fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
 							fwhm_used = log_dic[cycle][angle]["fwhm_used"]
 							snr_stamp = log_dic[cycle][angle][beam]["snr"]
@@ -1138,8 +1138,8 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 
 							for i_beam in range(2):
 								beam = np.asarray(["o", "e"])[i_beam]
-								x_stamp = log_dic[cycle][angle][beam]["x"] + 1
-								y_stamp = log_dic[cycle][angle][beam]["y"] + 1
+								x_stamp = log_dic[cycle][angle][beam]["x"] + 0.5 # Moved so that the circle is drawn at the center of the pixel
+								y_stamp = log_dic[cycle][angle][beam]["y"] + 0.5 # Moved so that the circle is drawn at the center of the pixel
 								fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
 								fwhm_used = log_dic[cycle][angle]["fwhm_used"]
 								snr_stamp = log_dic[cycle][angle][beam]["snr"]
