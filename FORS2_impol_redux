@@ -437,7 +437,7 @@ def create_directories(out_dir, nights, do_sci, do_bias, do_phot, plot_stamps):
 			print("Created %s" % plot_save_dir)
 		elif os.path.isdir(plot_save_dir) == True and plot_stamps == True:
 			print("Directory exists: %s" % plot_save_dir)	
-			os.system("rm %s*" % results_dir)
+			os.system("rm %s*" % plot_save_dir)
 			print("Directory emptied")
 
 	print()
