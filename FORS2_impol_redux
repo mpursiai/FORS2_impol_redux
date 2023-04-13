@@ -287,6 +287,12 @@ def check_sci_dic(sci_dic, raw_dir, night, check_files):
 								print()
 								print("Not valid integers! Try again!")
 								continue
+
+							elif len(input_str) == 0:
+								print()
+								print("Input required!")
+								continue								
+
 							elif np.amax(js_to_delete) + 1 > np.amax(js) :
 								print()
 								print("Value out of bounds! Max is %i" % np.amax(js))
