@@ -142,7 +142,7 @@ def sort_raw_files(files, target_name):
 	objects = np.unique([files_dic[file]["object"] for file in files])
 	sci_objects = objects[(objects != "BIAS") & (objects != 'FLAT,SKY') & (objects != 'STD')]
 
-	if target_name not in sci_objects:
+	if target_name not in sci_objects and len(files) > 0:
 		print_title("WARNING TARGET NAME NOT FOUND!", top=True)
 		print("Choose one of the following:")
 		for sci_object in sci_objects:
@@ -648,6 +648,7 @@ def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, 
 		nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
 
 	else:
+		print(len(files))
 		if len(files) > 0:
 	
 			# 2) Check sci_dic for bad files
