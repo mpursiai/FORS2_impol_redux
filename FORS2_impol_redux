@@ -645,10 +645,12 @@ def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, 
 	# Remove Extra files 
 	if check_files == "none":
 		print("Not checking the files! if you want to check the files, use --check_files all/none\n")
-		nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
+		if night != "all":
+			nights = np.asarray([night])
+		else:
+			nights = np.sort([night_temp.replace(out_dir, "") for night_temp in glob.glob(out_dir + "/*")])
 
 	else:
-		print(len(files))
 		if len(files) > 0:
 	
 			# 2) Check sci_dic for bad files
@@ -672,8 +674,10 @@ def reduce_data(raw_dir, out_dir, target_name, do_sci, do_bias, do_phot, night, 
 			#print("Checking if SCI files have already been reduced")
 	
 			# Find nights
-			nights = np.sort([night.replace(out_dir, "") for night in glob.glob(out_dir + "/*")])
-
+			if night != "all":
+				nights = np.asarray([night])
+			else:
+				nights = np.sort([night_temp.replace(out_dir, "") for night_temp in glob.glob(out_dir + "/*")])
 	#6) join the chips & mask o and e beams (or just find the comb files)
 
 	comb_dic = join_chips(nights, out_dir, do_sci)
@@ -986,8 +990,10 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 									print()
 									x_sources = np.append(x_sources, px_target[0])
 									y_sources = np.append(y_sources, px_target[1])
-							
+
 							# Find fwhm of the sources based on 2d gaussian fits
+
+							ind_target = find_ind_cat(x_sources,y_sources,px_target)
 							fwhm_target  = find_fwhm_photutils(data_stripes, [x_sources[ind_target],y_sources[ind_target]])[0]	
 							fwhm_sources = find_fwhm_photutils(data_stripes, np.transpose([x_sources, y_sources]))
 
@@ -1048,7 +1054,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							# Source extractor is perfectly replicated if using following setup
 							# phot_table = aperture_photometry(data_stripes - bkg_map, apers, error=bkg_rms_beam)
 							# i.e SE underestimates errors
-
+							# Aperture given in radii 
 							error_map = calc_total_error(data_stripes, bkg_rms_stripes, eff_gain)
 							apers = [CircularAperture(np.transpose([xy_beams[beam]["x"], xy_beams[beam]["y"]]), r=fwhm*i) for i in i_apers]
 							phot_table = aperture_photometry(data_stripes, apers, error=error_map)
