@@ -1,4 +1,4 @@
-#!/Users/miipu/opt/anaconda3/envs/FORS2_impol/bin/python
+#!/home/mpursiai/anaconda3/envs/FORS2_impol/bin/python
 
 import numpy as np
 import glob
@@ -487,6 +487,7 @@ def subtract_bias(sci_dic, nights, out_dir, target_name, do_sci):
 				print_title(string)
 
 				sci_files_filt = sci_files[filters == filt]
+				angles_filt = angles[filters == filt]
 				print("%i files found for the setup" % len(sci_files_filt))
 
 				# Check if the comb files are already created
@@ -501,7 +502,7 @@ def subtract_bias(sci_dic, nights, out_dir, target_name, do_sci):
 						cycle_counter = 1
 
 						# Find the correct files for that angle
-						sci_files_filt_ang = sci_files_filt[angles == angle]
+						sci_files_filt_ang = sci_files_filt[angles_filt == angle]
 						for file in sci_files_filt_ang:
 			
 							sci_data = fits.getdata(file)
