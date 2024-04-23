@@ -431,6 +431,16 @@ def create_directories(out_dir, nights, do_sci, do_bias, do_phot, plot_stamps):
 				os.system("rm %s*" % results_dir)
 				print("Directory emptied")
 
+	for bkg_save_dir in bkg_save_dirs:
+		if os.path.isdir(bkg_save_dir) == False:
+			os.mkdir(bkg_save_dir)
+			print("Created %s" % bkg_save_dir)
+		else:
+			print("Directory exists: %s" % bkg_save_dir)	
+			if do_phot == True:
+				os.system("rm %s*" % bkg_save_dir)
+				print("Directory emptied")
+
 	for plot_save_dir in plot_save_dirs:
 		if os.path.isdir(plot_save_dir) == False and plot_stamps == True:
 			os.mkdir(plot_save_dir)
@@ -819,7 +829,8 @@ def find_bkg_map(image, box_size=(32,64), filter_size=(3,3), sigmaclip=2.0):
 	return bkg #bkg.background_rms# * mask
 
 
-def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=5.0, set_fwhm=None, set_px=None, bkg_type="2dmap", plot_stamps=False):
+def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=5.0, set_fwhm=None, set_px=None, \
+	              bkg_type="2dmap", plot_stamps=False, save_bkg=True, r_annu=[0,0]):
 	# Run photutils
 	# https://photutils.readthedocs.io/en/stable/index.html#user-documentation
 	from photutils import DAOStarFinder
@@ -830,7 +841,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 	print_title("Preparing to run photutils to find the sources", top=True)
 
 	# Time to get cracking
-
 	nights = np.asarray(list(comb_dic.keys()))
 
 	dist_cut = 5
@@ -842,6 +852,8 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 		cat_dir      = out_dir + night + "/" + "cats/"
 		result_dir   = out_dir + night + "/" + "results/"
 		stamps_dir   = out_dir + night + "/" + "stamps/"
+		bkg_dir      = out_dir + night + "/" + "bkg/"
+
 		filters = np.asarray(list(comb_dic[night].keys()))
 		
 		# Night specific ccd based lims
@@ -1001,12 +1013,27 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							# Make sure that if fwhm_target < 1 the target doens't get deleted!
 							if fwhm_target < 1:
 								print_title("FWHM OF TARGET < 1! CHECK LOG FILE TO SEE IF CORRECT TARGET WAS FOUND", top=True)
-								fwhm_target = 3
-								ind_target = find_ind_cat(x_sources,y_sources,px_target)
+								fwhm_target = 4.5 # Dummy value assumes seeing of > 1"
+								#ind_target = find_ind_cat(x_sources,y_sources,px_target)
 								fwhm_sources[ind_target] = fwhm_target
 
-							good_inds = np.where((fwhm_sources < fwhm_target * star_fwhm_i) & (fwhm_sources > 1))[0]
-							xy_beams[beam] = {"x":x_sources[good_inds], "y":y_sources[good_inds], "fwhm":fwhm_sources[good_inds]}
+
+							# If fwhm is not set use the found fwhm of the target as basis to exclude sources
+							# Else use the set_fwhm value itself
+							if set_fwhm == None:
+								good_inds = np.where(((fwhm_sources < fwhm_target * star_fwhm_i) & (fwhm_sources > 1)))[0]
+								xy_beams[beam] = {"x":x_sources[good_inds], "y":y_sources[good_inds], "fwhm":fwhm_sources[good_inds]}
+							else:
+
+								good_inds = np.where(((fwhm_sources < set_fwhm * star_fwhm_i) & (fwhm_sources > 1)))[0]
+								# Make sure target is included
+								if ind_target not in good_inds:
+									#good_inds = np.append(good_inds, ind_target)
+									good_inds = np.insert(good_inds, np.where(good_inds>ind_target)[0][0], ind_target)
+
+								xy_beams[beam] = {"x":x_sources[good_inds], "y":y_sources[good_inds], "fwhm":fwhm_sources[good_inds]}								
+
+
 
 							# Remove target from the fwhm estimate 
 							# Huom! Only if more than one source was found
@@ -1019,8 +1046,14 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							fwhm_beam = np.nanmean(fwhm_sources[good_inds_fwhm])
 							fwhms_beam.append(fwhm_beam)
 							target_ind = find_ind_cat(x_sources, y_sources, px_target)
-						
 
+
+						# Save the background 2d images if asked bkg_map_stripes
+						if save_bkg == True:
+							bkg_file = "%s%s_%.1f_%s_bkgmap.fits" % (bkg_dir, filt, angle, cycle)
+							fits.writeto(bkg_file, bkg_map_stripes, overwrite=True, output_verify="silentfix+ignore")
+							print("Saved: %s" % bkg_file)
+						
 
 						# Then setup specific fwhm
 						if set_fwhm == None:
@@ -1062,16 +1095,16 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							
 							# Local background annulus
 							# Define annulus limits
-							if fwhm * np.amax(i_apers) < 10:
-								r_in = 10
-								r_out = 15
-							else:	
+
+							if r_annu[0] == 0. and r_annu[1] == 0.:
 								r_in = fwhm * np.amax(i_apers) + 5
 								r_out = r_in + 5
-
+							else:
+								r_in = r_annu[0]
+								r_out = r_annu[1]
 							annu = CircularAnnulus(np.transpose([xy_beams[beam]["x"], xy_beams[beam]["y"]]), r_in=r_in, r_out=r_out) 
 							annustats = ApertureStats(data_stripes, annu, error=error_map).to_table()
-							
+
 							# Mode used to estiamte the bkg
 							bkg_annu_mean = annustats["mode"].value
 							for i in range(len(i_apers)):
@@ -1085,8 +1118,10 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								x_sources   = aperstats["xcentroid"].value
 								y_sources   = aperstats["ycentroid"].value
 								f_sources   = aperstats["sum"].value 
+								
 								if bkg_type == "annulus":
-									f_sources -= bkg_annu_sum
+									f_sources = f_sources - bkg_annu_sum
+
 								fe_sources  = aperstats["sum_err"].value  
 								snr_sources = f_sources / fe_sources
 								
@@ -1102,6 +1137,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								log_dic[cycle][angle][beam]["y"] = y_sources[ind_target]
 								log_dic[cycle][angle][beam]["snr"] = snr_sources[ind_target]
 								log_dic[cycle][angle][beam]["fwhm"] = xy_beams[beam]["fwhm"][ind_target]
+								log_dic[cycle][angle][beam]["annulus"] = {"r_in":r_in, "r_out":r_out} # Stored even if not used
 
 								# Cross match the positions that same sources were found
 								# Also use fwhm found by me!
@@ -1157,7 +1193,8 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
 								fwhm_used = log_dic[cycle][angle]["fwhm_used"]
 								snr_stamp = log_dic[cycle][angle][beam]["snr"]
-
+								annu_rin_stamp  = log_dic[cycle][angle][beam]["annulus"]["r_in"]
+								annu_rout_stamp = log_dic[cycle][angle][beam]["annulus"]["r_out"]
 								win = 25
 								stamp_xlow, stamp_xhig = int(np.floor(x_stamp - win)), int(np.ceil(x_stamp + win))
 								stamp_ylow, stamp_yhig = int(np.floor(y_stamp - win)), int(np.ceil(y_stamp + win))
@@ -1180,6 +1217,32 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								for aper in apers:
 									circle = plt.Circle((x_stamp, y_stamp), aper, fill=False, color="red", linestyle="--", linewidth=1.0)
 									axarr[i_beam][a].add_patch(circle)
+								
+								if bkg_type == "annulus":
+
+									# the two circles
+									thetas = np.linspace(0,2*np.pi, 200)
+									# you don't need r = np.one(len(thetas))
+									x_unit_circle = np.cos(thetas)
+									y_unit_circle = np.sin(thetas)
+									
+									x_eigens = x_unit_circle * annu_rin_stamp
+									y_eigens = y_unit_circle * annu_rin_stamp
+									
+									xs = np.linspace(stamp_xlow, stamp_xhig, 201)
+									ys = np.linspace(stamp_ylow, stamp_yhig, 201)
+									
+									# mesh for contours
+									xv,yv = np.meshgrid(xs,ys)
+									
+									# generate the level map
+									r = (xv-x_stamp)**2 + (yv-y_stamp)**2
+									
+									# plot the contours with two levels only
+									# notice the xv, yv parameters
+									axarr[i_beam][a].contourf(xv, yv, r, levels=[annu_rin_stamp**2,annu_rout_stamp**2], colors=("firebrick"), alpha=0.5)
+									
+
 								if beam == "o":
 									axarr[i_beam][a].text(stamp_xlow + win/10, stamp_yhig - 1*win/5, "FWHM=%.1fpx" % fwhm_stamp,   fontweight="semibold",color="firebrick")
 									axarr[i_beam][a].set_title("$%.1f^{\circ}$" % angle)
@@ -1916,7 +1979,7 @@ def plot_QU_plane(Qs, Qes, Us, Ues, Qs_stars, Qes_stars, Us_stars, Ues_stars, sa
 	print("Saved %s" % save_pdf)
 
 def FORS2_impol_redux(target_name="", night="all", raw_dir="archive/", out_dir = "FORS2_impol/", do_sci=False, do_bias=False, do_phot=False, i_apers=np.arange(0.5,3.0,0.5),\
-					  px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some", plot_stamps=False):
+					  px_target_e=[], set_fwhm=None, bkg_type="2dmap", star_snr=200, star_fwhm_i=1.5, check_files="some", plot_stamps=False, save_bkg=False, r_annu=[0,0]):
 
 	#Print welcome
 	string = "WELCOME TO FORS2 IMPOL REDUX! A Back-to-back reducer of FORS2 impol data"
@@ -1930,7 +1993,7 @@ def FORS2_impol_redux(target_name="", night="all", raw_dir="archive/", out_dir =
 	#1) Run Aperture photometry with photutils
 	# Addition: night specific ccds are now carried through as they are needed for the instrumental correction in save_QUPX()
 
-	cat_dic, ccds = run_photutils(comb_dic, out_dir, do_phot, i_apers, px_target_e, star_fwhm_i, set_fwhm=set_fwhm, bkg_type=bkg_type, plot_stamps=plot_stamps)
+	cat_dic, ccds = run_photutils(comb_dic, out_dir, do_phot, i_apers, px_target_e, star_fwhm_i, set_fwhm=set_fwhm, bkg_type=bkg_type, plot_stamps=plot_stamps, save_bkg=save_bkg, r_annu=r_annu)
 
 	# Find the needed flux ratios for everything
 	Frs = create_fr_dic(cat_dic, out_dir, i_apers, star_snr, star_fwhm_i)
@@ -1943,22 +2006,24 @@ def main(argv):
 	# For running the script from command line
 
 	parser = argparse.ArgumentParser(prog="FORS2_impol_redux", description='Back-to-back reducer of FORS2 impol data')
-	parser.add_argument("-t",  "--target",     type=str, default="", help='The name of the science target in the fits files')
-	parser.add_argument("-n",  "--night",      type=str, default="all", help='Specify wanted night (YYYY-MM-DD). Default "all".')
-	parser.add_argument("-rd", "--raw_dir",    type=str, default="archive/",    help='The directory of the raw files (default archive/)')
-	parser.add_argument("-od", "--out_dir",    type=str, default="FORS2_impol/", help='The directory of the out files (default FORS2_impol/)')
-	parser.add_argument("-ds", "--do_sci",     action='store', nargs='*', help='Forces reduction of science files in case already done')
-	parser.add_argument("-db", "--do_bias",    action='store', nargs='*', help='Forces reduction of master bias in case already done')
-	parser.add_argument("-dp", "--do_phot",    action='store', nargs='*', help='Forces the aperture photometry')
-	parser.add_argument("-dr", "--do_redux",   action='store', nargs='*', help='Redo whole reduction precedure!')
-	parser.add_argument("-a",  "--apers",      nargs="+", default=[1.5852], help="The apertures (i) to use. Defined as i x FWHM")
-	parser.add_argument("-xye","--xye",        nargs="+", default=[], help="xy coordinates of e beam target. Default normally works, but the target is not always in the middle! ")
-	parser.add_argument("-fw", "--fwhm",       type=float, default=None, help="Forces fwhm (px). As default estimated based on sources available in the field")
-	parser.add_argument("-ss", "--star_snr",   type=float, default=200,  help="SNR cut for the field stars. Default 200")
-	parser.add_argument("-sf", "--star_fwhm",  type=float, default=1.3,  help="FWHM cut for the field stars. Given as i: FWHM_star < i x FWHM_target. Default 1.3")
-	parser.add_argument("-bkg","--bkg_type",   type=str, default="2dmap", help="Either 2dmap or annulus")
-	parser.add_argument("-cf", "--check_files",type=str, default="some",  help="Investigate files manually. \"all\":Check all files, \"some\": Only if an issue, \"none\": check none.")
-	parser.add_argument("-ps", "--plot_stamps", action='store', nargs='*', help='Plot stamps of the apertures for each cycle')
+	parser.add_argument("-t",   "--target",     type=str, default="", help='The name of the science target in the fits files')
+	parser.add_argument("-n",   "--night",      type=str, default="all", help='Specify wanted night (YYYY-MM-DD). Default "all".')
+	parser.add_argument("-rd",  "--raw_dir",    type=str, default="archive/",    help='The directory of the raw files (default archive/)')
+	parser.add_argument("-od",  "--out_dir",    type=str, default="FORS2_impol/", help='The directory of the out files (default FORS2_impol/)')
+	parser.add_argument("-ds",  "--do_sci",     action='store', nargs='*', help='Forces reduction of science files in case already done')
+	parser.add_argument("-db",  "--do_bias",    action='store', nargs='*', help='Forces reduction of master bias in case already done')
+	parser.add_argument("-dp",  "--do_phot",    action='store', nargs='*', help='Forces the aperture photometry')
+	parser.add_argument("-dr",  "--do_redux",   action='store', nargs='*', help='Redo whole reduction precedure!')
+	parser.add_argument("-a",   "--apers",      nargs="+", default=[1.5852], help="The apertures (i) to use. Defined as i x FWHM")
+	parser.add_argument("-xye", "--xye",        nargs="+", default=[], help="xy coordinates of e beam target. Default normally works, but the target is not always in the middle! ")
+	parser.add_argument("-fw",  "--fwhm",       type=float, default=None, help="Forces fwhm (px). As default estimated based on sources available in the field")
+	parser.add_argument("-ss",  "--star_snr",   type=float, default=200,  help="SNR cut for the field stars. Default 200")
+	parser.add_argument("-sf",  "--star_fwhm",  type=float, default=1.3,  help="FWHM cut for the field stars. Given as i: FWHM_star < i x FWHM_target. Default 1.3")
+	parser.add_argument("-cf",  "--check_files",type=str, default="some",  help="Investigate files manually. \"all\":Check all files, \"some\": Only if an issue, \"none\": check none.")
+	parser.add_argument("-ps",  "--plot_stamps", action='store', nargs='*', help='Plot stamps of the apertures for each cycle')
+	parser.add_argument("-bkg", "--bkg_type",   type=str, default="2dmap", help="Either 2dmap or annulus")
+	parser.add_argument("-ran", "--r_annu",     nargs="+", default=[0.,0.], help="Annulus BKG inner and outer radius in px (i.e. 5 10)")
+	parser.add_argument("-sbkg","--save_bkg",   action='store', nargs='*', help='Save background 2dmap')
 	
 	args = vars(parser.parse_args())
 
@@ -1987,7 +2052,13 @@ def main(argv):
 	else:
 		args["plot_stamps"] = True
 
+	if args["save_bkg"] == None:
+		args["save_bkg"] = False
+	else:
+		args["save_bkg"] = True
+
 	args["apers"] = np.asarray(args["apers"]).astype(float)
+	args["r_annu"] = np.asarray(args["r_annu"]).astype(float)
 	args["xye"]   = np.asarray(args["xye"]).astype(float)
  
 	FORS2_impol_redux(args["target"], night        = args["night"],\
@@ -2002,7 +2073,9 @@ def main(argv):
 									  star_snr     = args["star_snr"],\
 									  star_fwhm_i  = args["star_fwhm"],\
 									  bkg_type     = args["bkg_type"],\
+									  save_bkg     = args["save_bkg"],\
 									  check_files  = args["check_files"],\
+									  r_annu  = args["r_annu"],\
 									  plot_stamps  = args["plot_stamps"])
 
 
