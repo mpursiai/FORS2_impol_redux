@@ -829,7 +829,7 @@ def find_bkg_map(image, box_size=(32,64), filter_size=(3,3), sigmaclip=2.0):
 	return bkg #bkg.background_rms# * mask
 
 
-def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=5.0, set_fwhm=None, set_px=None, \
+def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=3.0, set_fwhm=None, set_px=None, \
 	              bkg_type="2dmap", plot_stamps=False, save_bkg=True, r_annu=[0,0]):
 	# Run photutils
 	# https://photutils.readthedocs.io/en/stable/index.html#user-documentation
@@ -969,7 +969,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 	
 								print("Searching for sources in %s-beam stripe y = %i - %i" % (beam, stripe_lim[0], stripe_lim[1]))
 								daofind = DAOStarFinder(fwhm=pu_fwhm, threshold=std*pu_threshold,exclude_border=True)  
-								sources = daofind(data_stripe - median)
+								sources = daofind(data_stripe - bkg_stripe.background) # Changed to use the estimated background
 																
 								if sources is not None:
 									x_sources_stripe = np.asarray(sources["xcentroid"].tolist())
@@ -1033,8 +1033,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 
 								xy_beams[beam] = {"x":x_sources[good_inds], "y":y_sources[good_inds], "fwhm":fwhm_sources[good_inds]}								
 
-
-
 							# Remove target from the fwhm estimate 
 							# Huom! Only if more than one source was found
 							if len(fwhm_sources) > 1:
@@ -1065,15 +1063,17 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							print("FWHM forced to %.2f" % fwhm)
 							print()
 					
-						if bkg_type == "2dmap":
-							data_stripes = data_stripes - bkg_map_stripes
-							# Sources are really slow to find if negative values present so:
-							data_stripes[data_stripes < 0] = 0
-
 						# Store data to log dic
 						log_dic[cycle][angle]["image"] = data_stripes
 						log_dic[cycle][angle]["fwhm_used"] = fwhm 
+						
 
+						# Subtract the background here to avoid repitition and make sure that in case of annulus data_stripes is used
+						
+						data_stripes_bkgsub = data_stripes - bkg_map_stripes
+						# Sources are really slow to find if negative values present so:
+						data_stripes_bkgsub[data_stripes_bkgsub < 0] = 0
+						
 						# Then the actual photometry
 						for beam in ["o", "e"]:
 							cat_dic[night][filt][cycle][angle][beam]  = {}
@@ -1089,38 +1089,44 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 							# phot_table = aperture_photometry(data_stripes - bkg_map, apers, error=bkg_rms_beam)
 							# i.e SE underestimates errors
 							# Aperture given in radii 
-							error_map = calc_total_error(data_stripes, bkg_rms_stripes, eff_gain)
+							error_map = calc_total_error(data_stripes_bkgsub, bkg_rms_stripes, eff_gain)
 							apers = [CircularAperture(np.transpose([xy_beams[beam]["x"], xy_beams[beam]["y"]]), r=fwhm*i) for i in i_apers]
-							phot_table = aperture_photometry(data_stripes, apers, error=error_map)
+							#phot_table = aperture_photometry(data_stripes, apers, error=error_map)
 							
 							# Local background annulus
 							# Define annulus limits
+							if bkg_type == "annulus":
+								if r_annu[0] == 0. and r_annu[1] == 0.:
+									r_in = fwhm * np.amax(i_apers) + 5
+									r_out = r_in + 5
+								else:
+									r_in = r_annu[0]
+									r_out = r_annu[1]
+								annu = CircularAnnulus(np.transpose([xy_beams[beam]["x"], xy_beams[beam]["y"]]), r_in=r_in, r_out=r_out) 
+								annustats = ApertureStats(data_stripes, annu).to_table()
 
-							if r_annu[0] == 0. and r_annu[1] == 0.:
-								r_in = fwhm * np.amax(i_apers) + 5
-								r_out = r_in + 5
-							else:
-								r_in = r_annu[0]
-								r_out = r_annu[1]
-							annu = CircularAnnulus(np.transpose([xy_beams[beam]["x"], xy_beams[beam]["y"]]), r_in=r_in, r_out=r_out) 
-							annustats = ApertureStats(data_stripes, annu, error=error_map).to_table()
+								# Mode used to estimate the bkg
+								bkg_annu_mean = annustats["mode"].value
 
-							# Mode used to estiamte the bkg
-							bkg_annu_mean = annustats["mode"].value
 							for i in range(len(i_apers)):
-								aperstats = ApertureStats(data_stripes, apers[i], error=error_map).to_table()
+								if bkg_type == "2dmap":
+									aperstats = ApertureStats(data_stripes_bkgsub, apers[i], error=error_map).to_table()
+								elif bkg_type == "annulus":
+									aperstats = ApertureStats(data_stripes, apers[i], error=error_map, local_bkg=annustats["mean"]).to_table()
+									
 
-								# Find bkg
-								aper_area = apers[i].area_overlap(data)
-								bkg_annu_sum = bkg_annu_mean * aper_area
+									# Find the local bkg first for the set aper area
+									#aper_area = apers[i].area_overlap(data)
+									#bkg_annu_sum = bkg_annu_mean * aper_area
 
-								# update the source coordiantes and find the FWHM values
+
+								# update the source coordinates and find the FWHM values
 								x_sources   = aperstats["xcentroid"].value
 								y_sources   = aperstats["ycentroid"].value
 								f_sources   = aperstats["sum"].value 
-								
-								if bkg_type == "annulus":
-									f_sources = f_sources - bkg_annu_sum
+
+								#if bkg_type == "annulus":
+								#	f_sources = f_sources - bkg_annu_sum
 
 								fe_sources  = aperstats["sum_err"].value  
 								snr_sources = f_sources / fe_sources
@@ -1132,12 +1138,13 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								# Find target details and add them to log_dic
 								ind_target = find_ind_cat(x_sources,y_sources,px_target)
 
-
+								print(x_sources[ind_target], y_sources[ind_target])
 								log_dic[cycle][angle][beam]["x"] = x_sources[ind_target]
 								log_dic[cycle][angle][beam]["y"] = y_sources[ind_target]
 								log_dic[cycle][angle][beam]["snr"] = snr_sources[ind_target]
 								log_dic[cycle][angle][beam]["fwhm"] = xy_beams[beam]["fwhm"][ind_target]
-								log_dic[cycle][angle][beam]["annulus"] = {"r_in":r_in, "r_out":r_out} # Stored even if not used
+								if bkg_type == "annulus":
+									log_dic[cycle][angle][beam]["annulus"] = {"r_in":r_in, "r_out":r_out} # Stored even if not used
 
 								# Cross match the positions that same sources were found
 								# Also use fwhm found by me!
@@ -1193,8 +1200,7 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
 								fwhm_used = log_dic[cycle][angle]["fwhm_used"]
 								snr_stamp = log_dic[cycle][angle][beam]["snr"]
-								annu_rin_stamp  = log_dic[cycle][angle][beam]["annulus"]["r_in"]
-								annu_rout_stamp = log_dic[cycle][angle][beam]["annulus"]["r_out"]
+
 								win = 25
 								stamp_xlow, stamp_xhig = int(np.floor(x_stamp - win)), int(np.ceil(x_stamp + win))
 								stamp_ylow, stamp_yhig = int(np.floor(y_stamp - win)), int(np.ceil(y_stamp + win))
@@ -1219,7 +1225,8 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 									axarr[i_beam][a].add_patch(circle)
 								
 								if bkg_type == "annulus":
-
+									annu_rin_stamp  = log_dic[cycle][angle][beam]["annulus"]["r_in"]
+									annu_rout_stamp = log_dic[cycle][angle][beam]["annulus"]["r_out"]
 									# the two circles
 									thetas = np.linspace(0,2*np.pi, 200)
 									# you don't need r = np.one(len(thetas))
@@ -1483,7 +1490,7 @@ def create_fr_dic(cat_dic, out_dir, i_apers, star_snr, star_fwhm_i):
 								star_xo, star_yo = xos[star_ind_o], yos[star_ind_o]
 								# X values are very concise - > Great to use for crossmatching
 	
-								if np.abs(star_xo - star_xe) < star_x_win and np.abs(star_yo - star_ye - y_shift) < star_y_win and fwhmos[star_ind_o] < fwhmo * star_fwhm_i and snros[star_ind_o] > star_snr:
+								if np.abs(star_xo - star_xe) < star_x_win and np.abs(star_yo - star_ye - y_shift) < star_y_win and fwhmos[star_ind_o] < used_fwhm * star_fwhm_i and snros[star_ind_o] > star_snr:
 	
 									xo, yo, fwhmo, xe, ye, fwhme, fr_temp, fre_temp, fo_temp, foe_temp, fe_temp, fee_temp, snr_temp = find_fr(xos, yos, fwhmos, snros, fos, feos, [star_xo, star_yo],\
 																												  							  xes, yes, fwhmes, snres, fes, fees, [star_xe, star_ye])
