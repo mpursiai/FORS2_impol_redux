@@ -542,12 +542,10 @@ def join_chips(nights, out_dir, do_sci):
 	for night in nights:
 		comb_dic[night] = {}
 
-		# Find used filters
-		# Note that this way relies on the name being in form "X_Y"
-
+		# Find used filters uding the file headers
 		all_files =  np.sort(glob.glob(out_dir + "%s/" % night + "sci/*"))
-		filters = np.unique([file.split("_")[2] + "_" + file.split("_")[3] for file in all_files])
-	
+		filter_files = np.sort(glob.glob(out_dir + "%s/" % night + "sci/*_0.0_*_c1.fits"))
+		filters = np.unique([get_filter(fits.getheader(file)) for file in filter_files])
 		for filt in filters:
 			comb_dic[night][filt] = {}
 
@@ -1124,7 +1122,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								x_sources   = aperstats["xcentroid"].value
 								y_sources   = aperstats["ycentroid"].value
 								f_sources   = aperstats["sum"].value 
-
 								#if bkg_type == "annulus":
 								#	f_sources = f_sources - bkg_annu_sum
 
@@ -1138,7 +1135,6 @@ def run_photutils(comb_dic, out_dir, do_phot, i_apers, px_e, star_fwhm_i, pu_fwh
 								# Find target details and add them to log_dic
 								ind_target = find_ind_cat(x_sources,y_sources,px_target)
 
-								print(x_sources[ind_target], y_sources[ind_target])
 								log_dic[cycle][angle][beam]["x"] = x_sources[ind_target]
 								log_dic[cycle][angle][beam]["y"] = y_sources[ind_target]
 								log_dic[cycle][angle][beam]["snr"] = snr_sources[ind_target]
