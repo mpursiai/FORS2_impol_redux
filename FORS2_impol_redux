@@ -813,7 +813,7 @@ def ds9_log_scale(arr,a=1000, lim=0):
 
 def find_fwhm_photutils(data, px_target):
 	# px_target ([x,y]) 
-	win = 10
+	win = 7.5
 	if isinstance(px_target[0], (float, int, np.int64)) == True:
 		px_target = np.asarray([px_target])
 
@@ -830,15 +830,16 @@ def find_fwhm_photutils(data, px_target):
 
 	return np.asarray(fwhm)
 
-def find_bkg_map(image, box_size=(32,64), filter_size=(3,3), sigmaclip=2.0):
+def find_bkg_map(image, box_size=(32,32), filter_size=(3,3), sigmaclip=2.0):
 
 	from photutils.background import MMMBackground,SExtractorBackground,Background2D
 
 	#print("Estimating background")
 
 	## Background noise [http://photutils.readthedocs.io/en/stable/background.html]
-	sigma_clip = SigmaClip(sigma=sigmaclip, maxiters=10) 
+	sigma_clip = SigmaClip(sigma=sigmaclip, maxiters=5) 
 	bkg_estimator = MMMBackground(sigma_clip=sigma_clip)
+	#bkg_estimator = MMMBackground(sigma_clip=None)
 	#bkg_estimator = SExtractorBackground(sigma_clip=sigma_clip)
 
 	bkg = Background2D(image,box_size,filter_size=filter_size,
@@ -851,7 +852,7 @@ def find_bkg_map(image, box_size=(32,64), filter_size=(3,3), sigmaclip=2.0):
 	return bkg #bkg.background_rms# * mask
 
 
-def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=5.0, pu_threshold=3.0, set_fwhm=None, set_px=None, \
+def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, pu_fwhm=3.0, pu_threshold=3.0, set_fwhm=None, set_px=None, \
 	              bkg_type="2dmap", plot_stamps=False, save_bkg=True, r_annu=[0,0]):
 	# Run photutils
 	# https://photutils.readthedocs.io/en/stable/index.html#user-documentation
@@ -991,7 +992,7 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 									mean, median, std = sigma_clipped_stats(data_stripe, sigma=3.0, maxiters=5) 
 		
 									print("Searching for sources in %s-beam stripe y = %i - %i" % (beam, stripe_lim[0], stripe_lim[1]))
-									daofind = DAOStarFinder(fwhm=pu_fwhm, threshold=std*pu_threshold,exclude_border=True)  
+									daofind = DAOStarFinder(fwhm=pu_fwhm, threshold=std*pu_threshold,exclude_border=False)  
 									try:
 										sources = daofind(data_stripe - bkg_stripe.background) # Changed to use the estimated background
 									except TypeError:
@@ -1035,6 +1036,10 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 								fwhm_target  = find_fwhm_photutils(data_stripes, [x_sources[ind_target],y_sources[ind_target]])[0]	
 								fwhm_sources = find_fwhm_photutils(data_stripes, np.transpose([x_sources, y_sources]))
 	
+								#for l in range(len(fwhm_sources)):
+								#	print("%10.2f %10.2f %10.2f" % (x_sources[l], y_sources[l], fwhm_sources[l]))
+
+
 								# Make sure that if fwhm_target < 1 the target doens't get deleted!
 								if fwhm_target < 1:
 									print_title("FWHM OF TARGET < 1! CHECK LOG FILE TO SEE IF CORRECT TARGET WAS FOUND", top=True)
@@ -1080,10 +1085,12 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 							# Then setup specific fwhm
 							if set_fwhm == None:
 								fwhm = np.nanmean(fwhms_beam)
+								fwhm_r = fwhm/2
 								print("Found FWHM = %.2f" % fwhm)
 								print()
 							else: 
 								fwhm = set_fwhm
+								fwhm_r = fwhm/2
 								print("FWHM forced to %.2f" % fwhm)
 								print()
 						
@@ -1121,7 +1128,7 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 								# Define annulus limits
 								if bkg_type == "annulus":
 									if r_annu[0] == 0. and r_annu[1] == 0.:
-										r_in = fwhm * np.amax(i_apers) + 5
+										r_in = fwhm/2 * np.amax(i_apers) + 5
 										r_out = r_in + 5
 									else:
 										r_in = r_annu[0]
@@ -1220,7 +1227,7 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 									x_stamp = log_dic[cycle][angle][beam]["x"] + 0.5 # Moved so that the circle is drawn at the center of the pixel
 									y_stamp = log_dic[cycle][angle][beam]["y"] + 0.5 # Moved so that the circle is drawn at the center of the pixel
 									fwhm_stamp = log_dic[cycle][angle][beam]["fwhm"]
-									fwhm_used = log_dic[cycle][angle]["fwhm_used"]
+									fwhm_used = log_dic[cycle][angle]["fwhm_used"] 
 									snr_stamp = log_dic[cycle][angle][beam]["snr"]
 	
 									win = 25
