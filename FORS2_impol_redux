@@ -640,7 +640,7 @@ def join_chips(nights, band, out_dir, do_sci):
 			
 							fits.writeto(comb_file, data_comb, header=hdr_comb, overwrite=True, output_verify="silentfix+ignore")
 							print("Saved: %s" % comb_file)
-							comb_dic[night][filt][cycle][angle] = {"file":comb_file, "mjd": get_mjd(fits.getheader(file))}
+							comb_dic[night][filt][cycle][angle] = {"file":comb_file, "mjd": get_mjd(fits.getheader(comb_file))}
 	
 							#Remove the chip files
 							os.remove(pair_files[0])
@@ -877,7 +877,6 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 		bkg_dir      = out_dir + night + "/" + "bkg/"
 
 		filters = np.asarray(list(comb_dic[night].keys()))
-		
 		# Night specific ccd based lims
 		ccd = fits.getheader(comb_dic[night][filters[0]]["c1"][angles[0]]["file"])[ccd_key]
 		ccds.append(ccd)
