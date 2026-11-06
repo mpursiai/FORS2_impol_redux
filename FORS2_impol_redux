@@ -28,6 +28,8 @@ blue_ccd_name = "EEV, EEV"
 px_scale = 0.126
 y_shift = 90
 
+inla_dirc = ""
+
 
 def find_target_xy(ccd):
 	# Pre defined target locations
@@ -823,14 +825,14 @@ def find_fwhm_photutils(data, px_target):
 		#print(data_win[data_win != 0])
 		if len(data_win[data_win != 0]) != 0:
 			fit2g = fit_2dgaussian(data_win)
-			fw = np.sqrt(8*np.log(2))*0.5*(fit2g.x_stddev_1+fit2g.y_stddev_1)
+			fw = np.sqrt(8*np.log(2))*0.5*(fit2g.x_stddev_1+fit2g.y_stddev_1) # convert std to FWHM
 			fwhm.append(fw)
 		else:
 			fwhm.append(np.nan)
 
 	return np.asarray(fwhm)
 
-def find_bkg_map(image, box_size=(32,32), filter_size=(3,3), sigmaclip=2.0):
+def find_bkg_map(image, box_size=(32,32), filter_size=(3,3), sigmaclip=3.0):
 
 	from photutils.background import MMMBackground,SExtractorBackground,Background2D
 
@@ -909,7 +911,8 @@ def run_photutils(comb_dic, out_dir, band, do_phot, i_apers, px_e, star_fwhm_i, 
 							cat_dic[night][filt][cycle][angle] = {}	
 							cat_dic[night][filt][cycle][angle]["o"] = {}
 							cat_dic[night][filt][cycle][angle]["e"] = {}
-	
+							cat_dic[night][filt][cycle][angle]["mjd"] = comb_dic[night][filt][cycle][angle]["mjd"]
+
 							for i in i_apers:
 								cat_name_o = glob.glob("%s%s_%.1f_%s_%s_%.2faper_*fwhm.cat" % (cat_dir, filt, angle, cycle, "o", i))[0]
 								cat_name_e = glob.glob("%s%s_%.1f_%s_%s_%.2faper_*fwhm.cat" % (cat_dir, filt, angle, cycle, "e", i))[0]
@@ -1641,7 +1644,7 @@ def QUPX_SNR(fr_dict, i_aper, target, star_num=0):
 def chromatic_correction(filt, q, u):
 
 	# adapted from eso_ipol.py by https://github.com/gongsale/FORS2-INSTPOL
-	# Perorms rotation on q,u plane and returns the new q u values
+	# Performs rotation on q,u plane and returns the new q u values
 	filters = np.array(['u_HIGH','b_HIGH','v_HIGH','R_SPECIAL','I_BESS'])
 	#lams = np.array([361,440,557,655,768,656.3,381.4])#nm
 	chrom = np.array([-2.07,1.54,1.80,-1.19,-2.89])/180.0*np.pi #In rad, from ESO manual
@@ -1663,8 +1666,73 @@ def chromatic_correction(filt, q, u):
 	return q, u
 
 def instrumental_correction(filt, x, y, q, u, ccd):
-	# Corrects Q and U params for the instrumetnal correction following eq 12. in Gonzales-Gaitan et al. 2020
+	# Corrects Q and U params for the instrumental correction following Gonzales-Gaitan et al. 2020
+	# From http://dx.doi.org/10.1051/0004-6361/201936379
+	# Note that provided details are wrong in many ways
 
+	# Even the residual appears to map what is shown in the paper
+
+	crop_x_lims, crop_y_lims = find_crop_lims(ccd)
+
+	print_title("Performing Instrumental Correction")
+
+	try:
+		# FIrst check if the maps exist on computer
+		if os.path.isdir(inla_dirc):
+			print("INLA maps found")
+			q_file = glob.glob(inla_dirc + "%s_inlaQ.fits" % filt.replace("FORS2_","")) [0]
+			u_file = glob.glob(inla_dirc + "%s_inlaU.fits" % filt.replace("FORS2_","")) [0]		
+			q_map = fits.getdata(q_file,ignore_missing_simple=True)[crop_y_lims[0]:crop_y_lims[1], crop_x_lims[0]:crop_x_lims[1]]
+			u_map = fits.getdata(u_file,ignore_missing_simple=True)[crop_y_lims[0]:crop_y_lims[1], crop_x_lims[0]:crop_x_lims[1]]
+			x_inds, y_inds = np.around(x,decimals=0).astype(np.uint64), np.around(y,decimals=0).astype(np.uint64)
+			q_inst = q_map[y_inds,x_inds]
+			u_inst = u_map[y_inds,x_inds]
+			#for l in range(len(x_inds)):
+			#	print("%6i %6i %10.2f %10.2f" % (x_inds[l], y_inds[l], q_inst[l]*100, u_inst[l]*100))
+
+		else:
+			# Use the equation
+			# eq 12. in tha paper
+			# Table 4.
+			#  Q should be U, and U should be Q
+			# The resulting corrections match with the inla maps
+
+			print("No INLA maps identified, using the equation")
+
+			def eq12(stokes, filt, x, y):
+				eq_dict = {"Q":{'b_HIGH':    {"a":10.045*10**3,  "b":10.528*10**3,  "the":np.radians(-0.361),  "x0":-226.4+1226-crop_x_lims[0], "y0":214.7+1025-crop_y_lims[0]}  ,\
+								'v_HIGH':    {"a":8.981 *10**3,  "b":9.574 *10**3,  "the":np.radians(-0.584),  "x0":-296.3+1226-crop_x_lims[0], "y0":216.9+1025-crop_y_lims[0]}  ,\
+								'R_SPECIAL': {"a":8.781 *10**3,  "b":9.071 *10**3,  "the":np.radians(-2.644),  "x0":-278.9+1226-crop_x_lims[0], "y0":195.5+1025-crop_y_lims[0]}  ,\
+								'I_BESS':    {"a":8.414 *10**3,  "b":8.443 *10**3,  "the":np.radians(-3.810),  "x0":-311.1+1226-crop_x_lims[0], "y0":159.0+1025-crop_y_lims[0]}} ,\
+						   
+						   "U":{'b_HIGH':    {"a":10.995*10**3,  "b":10.673*10**3,  "the":np.radians(-43.172), "x0":-254.9+1226-crop_x_lims[0], "y0":132.1+1025-crop_y_lims[0]}  ,\
+								'v_HIGH':    {"a":9.688 *10**3,  "b":10.129*10**3,  "the":np.radians(-43.894), "x0":-283.9+1226-crop_x_lims[0], "y0":191.7+1025-crop_y_lims[0]}  ,\
+								'R_SPECIAL': {"a":9.208 *10**3,  "b":9.285 *10**3,  "the":np.radians(-48.478), "x0":-260.1+1226-crop_x_lims[0], "y0":152.4+1025-crop_y_lims[0]}  ,\
+								'I_BESS':    {"a":8.556 *10**3,  "b":8.643 *10**3,  "the":np.radians(-49.274), "x0":-297.9+1226-crop_x_lims[0], "y0":177.3+1025-crop_y_lims[0]}}}
+				a   = eq_dict[stokes][filt]["a"]
+				b   = eq_dict[stokes][filt]["b"]
+				the = eq_dict[stokes][filt]["the"]
+				x0  = eq_dict[stokes][filt]["x0"]
+				y0  = eq_dict[stokes][filt]["y0"]
+		
+				inst_arr = ((x - x0)*np.sin(the) + (y - y0)*np.cos(the))**2.0 / b**2.0 \
+			        	 - ((x - x0)*np.cos(the) - (y - y0)*np.sin(the))**2.0 / a**2.0
+		
+				return inst_arr
+		
+			q_inst = eq12("Q", filt, x, y)
+			u_inst = eq12("U", filt, x, y)
+	
+		return q - q_inst, u - u_inst
+
+
+	except (KeyError, IndexError):
+		print("Filter %s not known! Instrumental Correction is not performed" % filt)
+
+		return q, u
+
+def instrumental_correction_old(filt, x, y, q, u, ccd):
+	# Corrects Q and U params for the instrumental correction following eq 12. in Gonzales-Gaitan et al. 2020
 	# From http://dx.doi.org/10.1051/0004-6361/201936379
 	# Note that Table 4. in the paper is wrong in many ways. Q should be U and vice versa and x should be y and vice versa
 	# Based on testing against the inlap maps x0 and y0 values should be zero... 
@@ -1726,7 +1794,7 @@ def X(Qs, Qes, Us, Ues):
 	return Xs, Xes
 
 
-def P_bias_correction(qi, qe, ui, ue, rho=0, eq=37):
+def P_bias_correction(qi, qe, ui, ue, rho=0, eq=20):
 	# Polarisation bias correction ala:
 	# Following https://academic.oup.com/mnras/article/439/4/4048/1175299 Eq. 37 or 20
 	# Plaszczynski et al 2014
